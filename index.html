@@ -217,6 +217,11 @@
             background-color: #3d8b40;
         }
         
+        .btn-small {
+            padding: 6px 12px;
+            font-size: 0.9rem;
+        }
+        
         .transactions-table {
             width: 100%;
             border-collapse: collapse;
@@ -269,32 +274,6 @@
             border-top: 1px solid rgba(0, 0, 0, 0.1);
         }
         
-        .connection-info {
-            background-color: rgba(52, 152, 219, 0.1);
-            border-radius: 10px;
-            padding: 15px;
-            margin-bottom: 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        
-        .info-item {
-            display: flex;
-            flex-direction: column;
-        }
-        
-        .info-label {
-            font-size: 0.85rem;
-            color: var(--text-light);
-            margin-bottom: 5px;
-        }
-        
-        .info-value {
-            font-weight: 500;
-            word-break: break-all;
-        }
-        
         .error-message {
             background-color: rgba(231, 76, 60, 0.15);
             border-radius: 10px;
@@ -302,6 +281,37 @@
             text-align: center;
             margin: 20px 0;
             color: var(--expense);
+        }
+        
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255, 255, 255, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 5px solid rgba(76, 175, 80, 0.2);
+            border-top: 5px solid var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .hidden {
+            display: none;
         }
         
         @media (max-width: 768px) {
@@ -322,16 +332,14 @@
             .user-info {
                 justify-content: center;
             }
-            
-            .connection-info {
-                flex-direction: column;
-                gap: 15px;
-                align-items: flex-start;
-            }
         }
     </style>
 </head>
 <body>
+    <div class="loading-overlay" id="loading-overlay">
+        <div class="spinner"></div>
+    </div>
+    
     <div class="container">
         <header>
             <div class="logo">
@@ -344,19 +352,8 @@
             </div>
         </header>
         
-        <div id="connection-info" class="connection-info">
-            <div class="info-item">
-                <span class="info-label">Google Sheet ID</span>
-                <span id="sheet-id" class="info-value">Đang tải...</span>
-            </div>
-            <div class="info-item">
-                <span class="info-label">API URL</span>
-                <span id="api-url" class="info-value">Đang tải...</span>
-            </div>
-        </div>
-        
-        <div id="error-message" class="error-message" style="display: none;">
-            <p>Không thể kết nối đến dữ liệu. Vui lòng kiểm tra lại URL và Sheet ID.</p>
+        <div id="error-message" class="error-message hidden">
+            <p id="error-text">Không thể kết nối đến dữ liệu. Vui lòng kiểm tra lại URL và Sheet ID.</p>
             <p id="error-detail"></p>
         </div>
         
@@ -438,9 +435,14 @@
                     <i class="fas fa-list"></i>
                     <h2 class="section-title">Giao dịch gần đây</h2>
                 </div>
-                <button class="btn" id="add-transaction">
-                    <i class="fas fa-plus"></i> Thêm giao dịch
-                </button>
+                <div>
+                    <button class="btn btn-small" id="refresh-data">
+                        <i class="fas fa-sync-alt"></i> Làm mới
+                    </button>
+                    <button class="btn" id="add-transaction">
+                        <i class="fas fa-plus"></i> Thêm giao dịch
+                    </button>
+                </div>
             </div>
             
             <table class="transactions-table">
@@ -469,33 +471,55 @@
     </div>
 
     <script>
+        // Biến toàn cục
+        let apiUrl = '';
+        let sheetId = '';
+        let expenseChart = null;
+        let trendChart = null;
+        let financialData = null;
+        
         document.addEventListener('DOMContentLoaded', function() {
+            // Hiển thị loading
+            document.getElementById('loading-overlay').classList.remove('hidden');
+            
             // Lấy tham số từ URL
             const urlParams = new URLSearchParams(window.location.search);
-            const apiUrl = urlParams.get('api');
-            const sheetId = urlParams.get('sheetId');
-            
-            // Hiển thị thông tin kết nối
-            document.getElementById('sheet-id').textContent = sheetId || 'Không xác định';
-            document.getElementById('api-url').textContent = apiUrl || 'Không xác định';
+            apiUrl = urlParams.get('api');
+            sheetId = urlParams.get('sheetId');
             
             // Kiểm tra tham số bắt buộc
             if (!apiUrl || !sheetId) {
                 showError('Thiếu tham số bắt buộc', 'Vui lòng truy cập ứng dụng thông qua liên kết từ bot Telegram');
+                document.getElementById('loading-overlay').classList.add('hidden');
                 return;
             }
             
-            // Giả lập dữ liệu cho demo
-            // Trong thực tế, bạn sẽ gọi API từ Google Apps Script
-            setTimeout(() => {
-                loadDemoData();
-            }, 1000);
+            // Lấy dữ liệu từ Google Apps Script
+            fetchData();
+            
+            // Xử lý nút làm mới
+            document.getElementById('refresh-data').addEventListener('click', fetchData);
+            
+            // Xử lý nút thêm giao dịch
+            document.getElementById('add-transaction').addEventListener('click', function() {
+                alert('Chức năng thêm giao dịch mới sẽ được thực hiện qua Google Apps Script API');
+            });
         });
         
         function showError(title, message) {
             const errorDiv = document.getElementById('error-message');
-            errorDiv.style.display = 'block';
-            errorDiv.innerHTML = `<p><strong>${title}</strong></p><p>${message}</p>`;
+            const errorText = document.getElementById('error-text');
+            
+            errorDiv.classList.remove('hidden');
+            errorText.textContent = title;
+            
+            if (message) {
+                document.getElementById('error-detail').textContent = message;
+            }
+        }
+        
+        function hideError() {
+            document.getElementById('error-message').classList.add('hidden');
         }
         
         function formatCurrency(amount) {
@@ -505,25 +529,79 @@
             }).format(amount);
         }
         
-        function loadDemoData() {
-            // Tổng quan tài chính
-            document.getElementById('total-income').textContent = formatCurrency(12500000);
-            document.getElementById('total-expense').textContent = formatCurrency(8500000);
-            document.getElementById('total-savings').textContent = formatCurrency(4000000);
-            document.getElementById('balance').textContent = formatCurrency(4000000);
+        function fetchData() {
+            // Hiển thị loading
+            document.getElementById('loading-overlay').classList.remove('hidden');
+            hideError();
             
-            // Biểu đồ phân bổ chi tiêu
-            const expenseCtx = document.getElementById('expense-chart').getContext('2d');
-            new Chart(expenseCtx, {
+            // Tạo URL gọi API
+            const apiEndpoint = `${apiUrl}?action=getFinancialSummary&sheetId=${encodeURIComponent(sheetId)}`;
+            
+            // Gọi API Google Apps Script
+            fetch(apiEndpoint)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Lỗi kết nối tới API');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.error) {
+                        throw new Error(data.error);
+                    }
+                    
+                    financialData = data;
+                    updateUI();
+                    document.getElementById('loading-overlay').classList.add('hidden');
+                })
+                .catch(error => {
+                    console.error('Lỗi khi lấy dữ liệu:', error);
+                    showError('Lỗi khi lấy dữ liệu', error.message);
+                    document.getElementById('loading-overlay').classList.add('hidden');
+                });
+        }
+        
+        function updateUI() {
+            // Cập nhật tổng quan tài chính
+            document.getElementById('total-income').textContent = formatCurrency(financialData.income);
+            document.getElementById('total-expense').textContent = formatCurrency(financialData.expense);
+            document.getElementById('total-savings').textContent = formatCurrency(financialData.savings);
+            document.getElementById('balance').textContent = formatCurrency(financialData.balance);
+            
+            // Tạo biểu đồ phân bổ chi tiêu
+            createExpenseChart();
+            
+            // Tạo biểu đồ xu hướng
+            createTrendChart();
+            
+            // Cập nhật giao dịch
+            updateTransactionsTable();
+        }
+        
+        function createExpenseChart() {
+            const ctx = document.getElementById('expense-chart').getContext('2d');
+            
+            // Hủy biểu đồ cũ nếu tồn tại
+            if (expenseChart) {
+                expenseChart.destroy();
+            }
+            
+            // Chuẩn bị dữ liệu cho biểu đồ
+            const categories = financialData.expenseCategories.map(item => item.category);
+            const amounts = financialData.expenseCategories.map(item => item.amount);
+            const colors = [
+                '#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', 
+                '#9966FF', '#FF9F40', '#8AC926', '#1982C4',
+                '#6A4C93', '#FF595E'
+            ];
+            
+            expenseChart = new Chart(ctx, {
                 type: 'doughnut',
                 data: {
-                    labels: ['Ăn uống', 'Mua sắm', 'Di chuyển', 'Giải trí', 'Hóa đơn', 'Khác'],
+                    labels: categories,
                     datasets: [{
-                        data: [2500000, 1800000, 1200000, 800000, 1500000, 700000],
-                        backgroundColor: [
-                            '#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', 
-                            '#9966FF', '#FF9F40'
-                        ],
+                        data: amounts,
+                        backgroundColor: colors,
                         borderWidth: 1
                     }]
                 },
@@ -546,17 +624,29 @@
                     }
                 }
             });
+        }
+        
+        function createTrendChart() {
+            const ctx = document.getElementById('trend-chart').getContext('2d');
             
-            // Biểu đồ xu hướng
-            const trendCtx = document.getElementById('trend-chart').getContext('2d');
-            new Chart(trendCtx, {
+            // Hủy biểu đồ cũ nếu tồn tại
+            if (trendChart) {
+                trendChart.destroy();
+            }
+            
+            // Tạo dữ liệu mẫu cho biểu đồ xu hướng
+            const months = ['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8', 'T9', 'T10', 'T11', 'T12'];
+            const incomeData = months.map(() => Math.floor(Math.random() * 10000000) + 5000000);
+            const expenseData = months.map(() => Math.floor(Math.random() * 7000000) + 3000000);
+            
+            trendChart = new Chart(ctx, {
                 type: 'line',
                 data: {
-                    labels: ['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8', 'T9', 'T10', 'T11', 'T12'],
+                    labels: months,
                     datasets: [
                         {
                             label: 'Thu nhập',
-                            data: [10, 11, 8, 12, 9, 13, 11, 10, 12, 14, 13, 15],
+                            data: incomeData,
                             borderColor: '#27ae60',
                             backgroundColor: 'rgba(39, 174, 96, 0.1)',
                             tension: 0.3,
@@ -564,7 +654,7 @@
                         },
                         {
                             label: 'Chi tiêu',
-                            data: [7, 8, 6, 9, 7, 10, 9, 8, 10, 11, 10, 12],
+                            data: expenseData,
                             borderColor: '#e74c3c',
                             backgroundColor: 'rgba(231, 76, 60, 0.1)',
                             tension: 0.3,
@@ -580,15 +670,31 @@
                             beginAtZero: true,
                             ticks: {
                                 callback: function(value) {
-                                    return value + 'tr';
+                                    return formatCurrency(value);
+                                }
+                            }
+                        }
+                    },
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const label = context.dataset.label || '';
+                                    const value = context.raw || 0;
+                                    return `${label}: ${formatCurrency(value)}`;
                                 }
                             }
                         }
                     }
                 }
             });
+        }
+        
+        function updateTransactionsTable() {
+            const tbody = document.getElementById('transactions-body');
+            tbody.innerHTML = '';
             
-            // Giao dịch mẫu
+            // Tạo dữ liệu mẫu cho bảng giao dịch
             const transactions = [
                 { date: '15/10/2023', description: 'Lương tháng 10', type: 'income', category: 'Lương', amount: 12500000 },
                 { date: '16/10/2023', description: 'Siêu thị', type: 'expense', category: 'Thực phẩm', amount: 850000 },
@@ -597,9 +703,7 @@
                 { date: '19/10/2023', description: 'Điện thoại', type: 'expense', category: 'Công nghệ', amount: 4500000 }
             ];
             
-            const tbody = document.getElementById('transactions-body');
-            tbody.innerHTML = '';
-            
+            // Thêm dữ liệu vào bảng
             transactions.forEach(transaction => {
                 const row = document.createElement('tr');
                 
@@ -620,11 +724,6 @@
                 `;
                 
                 tbody.appendChild(row);
-            });
-            
-            // Xử lý nút thêm giao dịch
-            document.getElementById('add-transaction').addEventListener('click', function() {
-                alert('Chức năng thêm giao dịch mới sẽ được thực hiện qua Google Apps Script API');
             });
         }
     </script>
